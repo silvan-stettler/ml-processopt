@@ -1,0 +1,7 @@
+# GITIGNORE
+
+# FOLDERS
+.ipynb_checkpoints/
+
+# FILES
+example_kmean.PNG
