@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 from os import listdir
 from os.path import isfile, join
 
+SAVE_PATH = '../trained/unet.pt'
 class MicroscopeImageDataset(Dataset):
     def __init__(self, img_dir, mask_dir, transform=None, split_samples=None):
         self.root_dir = img_dir
@@ -43,14 +44,13 @@ class MicroscopeImageDataset(Dataset):
         mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
         image = io.imread(img_name)
         mask = io.imread(mask_name)
-        #mask[mask > 255/2] = 1
-        #mask[mask <= 255/2] = 0
-        print(mask.max())
+        mask[mask <= 127] = 0
+        mask[mask > 127] = 1
         sample = {'image':image,'mask':mask}
-        if self.transform:
-            sample = self.transform(sample)
         if self.split_samples:
             sample = self.split_sample_(sample, sub_idx)
+        if self.transform:
+            sample = self.transform(sample)
         return sample
     
     def split_sample_(self,sample, n):
@@ -72,18 +72,6 @@ class MicroscopeImageDataset(Dataset):
         h0, h1 = h_int[int(nh)], h_int[int(nh+1)]
         w0, w1 = w_int[int(nw)], w_int[int(nw+1)]
         return {'image':img[h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
-    
-#class DivideImage(object):
-#    
-#    def __init__(self, divide_by):
-#        assert isinstance(divide_by, int)
-#        if divide_by%2 != 0:
-#            raise ValueError("Images must be divided in an even number of parts")
-#            self.divide_by = divide_by-1
-#            print("Dividing images by {0}".format(self.divide_by))
-#        else:
-#            self.divide_by = divide_by
-#    def __call__(self, sample)
     
 class Rescale(object):
     """Rescale the image in a sample to a given size.
@@ -180,10 +168,53 @@ class ToTensor(object):
 
     def __call__(self, sample):
         image,mask = sample['image'], sample['mask']
-        # swap color axis because
-        # numpy image: H x W x C
-        # torch image: C X H X W
-        image = image.transpose()[np.newaxis,:,:]
-        mask = mask.transpose()[np.newaxis,:,:]
-        return {'image':torch.from_numpy(image),
-                'mask': torch.from_numpy(mask)}
+        assert image.shape == mask.shape
+        assert len(image.shape) == 2 or (len(image.shape)==3 and image.shape[2]==1)
+        
+        if len(image.shape) == 2:
+            image = torch.from_numpy(image.transpose()).view(1,image.shape[1],image.shape[0]).type(torch.FloatTensor)
+            mask = torch.from_numpy(mask.transpose()).type(torch.LongTensor)
+        
+        # TODO: XXXXXXXXXXXXXXXXXXXX when len(shape) isn't 2
+        return {'image':image,
+                'mask': mask}
+        
+def train_unet(model, device, optimizer, criterion, dataloader, 
+               epochs=10, lambda_=1e-3, reg_type=None, save=False):
+    
+    avg_epoch_loss = []
+    for _ in range(epochs):
+        print("Epoch {0}".format(_))
+        loss_accum = 0
+        for smple in dataloader:
+            X = smple['image'].to(device)  # [N, 1, H, W]
+            y = smple['mask'].to(device)  # [N, H, W] with class indices (0, 1)
+            
+            mu, std = X.mean(), X.std()
+            X.sub_(mu).div_(std)
+            
+            prediction = model(X)  # [N, 2, H, W]
+            loss = criterion(prediction, y)
+            
+            if reg_type:
+                assert reg_type in ['l2','l1']
+                if reg_type == 'l2':
+                    for p in model.parameters():
+                        loss += lambda_ * p.pow(2).sum()
+                    
+            print("Cross entropy loss: {:.02f}".format(loss.item()))
+            loss_accum += loss.item()
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            if reg_type=='l1':
+                with torch.no_grad():
+                    for p in model.parameters():
+                        p.sub_(p.sign() * p.abs().clamp(max = lambda_))
+                        
+        avg_epoch_loss.append(loss_accum/len(dataloader))
+    
+    if save:
+        torch.save(model.state_dict(),SAVE_PATH)

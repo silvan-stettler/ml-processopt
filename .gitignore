@@ -3,6 +3,7 @@
 # FOLDERS
 .ipynb_checkpoints/
 images/
+unet/__pycache__/
 
 # FILES
 example_kmean.PNG
