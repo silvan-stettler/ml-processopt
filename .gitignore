@@ -2,7 +2,7 @@
 
 # FOLDERS
 .ipynb_checkpoints/
-#images/
+images/
 
 # FILES
 example_kmean.PNG
