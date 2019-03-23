@@ -7,18 +7,18 @@ Created on Mon Mar 18 23:29:24 2019
 import torch
 from skimage import io, transform
 import numpy as np
-import matplotlib.pyplot as plt
+from utils import label_mask
 from torch.utils.data import Dataset
 from os import listdir
 from os.path import isfile, join
 
 SAVE_PATH = '../trained/unet.pt'
 class MicroscopeImageDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, transform=None, split_samples=None):
+    def __init__(self, img_dir, mask_dir, read_top=True, split_samples=None, split_type='cart'):
         self.root_dir = img_dir
         self.mask_dir = mask_dir
+        self.read_top = read_top
         self.file_list = [ f for f in listdir(self.root_dir) if isfile(join(self.root_dir,f)) ]
-        self.transform = transform
         if split_samples:
             assert isinstance(split_samples, (int,tuple))
         self.split_samples = split_samples
@@ -42,15 +42,17 @@ class MicroscopeImageDataset(Dataset):
             idx = int((index-sub_idx)/k)
         img_name = join(self.root_dir,self.file_list[idx])
         mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
-        image = io.imread(img_name)
+        if self.read_top:
+            img_name_top = join(self.mask_dir, self.file_list[idx])[:-4] + '_top.png'
+            image_col = io.imread_collection([img_name, img_name_top])
+            image = io.concatenate_images(image_col)
+        else:
+            image = io.imread(img_name)
         mask = io.imread(mask_name)
-        mask[mask <= 127] = 0
-        mask[mask > 127] = 1
+        mask = label_mask(mask)
         sample = {'image':image,'mask':mask}
         if self.split_samples:
             sample = self.split_sample_(sample, sub_idx)
-        if self.transform:
-            sample = self.transform(sample)
         return sample
     
     def split_sample_(self,sample, n):
@@ -187,8 +189,8 @@ def train_unet(model, device, optimizer, criterion, dataloader,
         print("Epoch {0}".format(_))
         loss_accum = 0
         for smple in dataloader:
-            X = smple['image'].to(device)  # [N, 1, H, W]
-            y = smple['mask'].to(device)  # [N, H, W] with class indices (0, 1)
+            X = smple['image']  # [N, 1, H, W]
+            y = smple['mask']  # [N, H, W] with class indices (0, 1)
             
             mu, std = X.mean(), X.std()
             X.sub_(mu).div_(std)
@@ -218,3 +220,5 @@ def train_unet(model, device, optimizer, criterion, dataloader,
     
     if save:
         torch.save(model.state_dict(),SAVE_PATH)
+    
+    return avg_epoch_loss, model
