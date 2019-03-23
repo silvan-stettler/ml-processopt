@@ -6,6 +6,8 @@ Created on Wed Mar 20 16:41:21 2019
 """
 
 import numpy as np
+import torch
+from torchvision import transforms
 
 def label_mask(mask_img, label_info):
     
@@ -25,3 +27,21 @@ def label_mask(mask_img, label_info):
             out[(mask_img <= thresh[i]) & (mask_img > thresh[i-1])] = l
         
     return out
+
+def infere_model(model, X):
+    " Test the trained model on a sample"
+    assert isinstance(X, torch.FloatTensor)
+    assert X.shape[0] == 2
+    
+    X.unsqueeze_(0)
+    model.eval()
+    output = model(X)
+    output.squeeze_(0)
+    output = -torch.nn.functional.log_softmax(output, dim=0)
+    output_labels = output.argmax(dim=0)
+    output_labels.unsqueeze_(0)
+    output_labels = output_labels.permute(1,2,0)
+    img = transforms.functional.to_pil_image(np.uint8(output_labels))
+    
+    return img
+    
