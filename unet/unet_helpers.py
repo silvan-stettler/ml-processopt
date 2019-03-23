@@ -9,20 +9,20 @@ from skimage import io, transform
 import numpy as np
 
 from torch.utils.data import Dataset
-import torchvision.transforms.functional as F
 from os import listdir
 from os.path import isfile, join
-from utils import label_mask
+from .utils import label_mask
 
 SAVE_PATH = '../trained/unet.pt'
 class MicroscopeImageDataset(Dataset):
     def __init__(self, img_dir, mask_dir, mask_label_info, read_top=True, split_samples=None, transf=None):
-        self.root_dir = img_dir
+        self.bottom_dir = img_dir[0]
+        self.top_dir = img_dir[1]
         self.mask_dir = mask_dir
         self.read_top = read_top
         self.transform_samples = transf
         self.mask_label_info = mask_label_info
-        self.file_list = [ f for f in listdir(self.root_dir) if isfile(join(self.root_dir,f)) ]
+        self.file_list = [ f for f in listdir(self.bottom_dir) if isfile(join(self.bottom_dir,f)) ]
         if split_samples:
             assert isinstance(split_samples, (int,tuple))
         self.split_samples = split_samples
@@ -44,12 +44,12 @@ class MicroscopeImageDataset(Dataset):
                 k = self.split_samples[0]*self.split_samples[1]
             sub_idx = int(index%k)
             idx = int((index-sub_idx)/k)
-        img_name = join(self.root_dir,self.file_list[idx])
+        img_name = join(self.bottom_dir,self.file_list[idx])
         mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
         
         # Merge top and bottom picture to single input
         if self.read_top:
-            img_name_top = join(self.mask_dir, self.file_list[idx])[:-4] + '_top.png'
+            img_name_top = join(self.top_dir, self.file_list[idx])[:-4] + '_top.png'
             image_col = io.imread_collection([img_name, img_name_top])
             # 3D image
             image = io.concatenate_images(image_col)
@@ -64,7 +64,7 @@ class MicroscopeImageDataset(Dataset):
         if self.split_samples:
             sample = self.split_sample_(sample, sub_idx)
             
-        if self.transfrom_samples:
+        if self.transform_samples:
             sample = self.transform_samples(sample)
         return sample
     
@@ -88,7 +88,7 @@ class MicroscopeImageDataset(Dataset):
         h0, h1 = h_int[int(nh)], h_int[int(nh+1)]
         w0, w1 = w_int[int(nw)], w_int[int(nw+1)]
         
-        return {'image':img[:,h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
+        return {'image':img[h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
     
 class Rescale(object):
     """Rescale the image in a sample to a given size.
@@ -107,7 +107,7 @@ class Rescale(object):
         image, mask = sample['image'], sample['mask']
 
         h, w = image.shape[:2]
-        assert image.shape == mask.shape
+        assert image.shape[:2] == mask.shape
         if isinstance(self.output_size, int):
             if h > w:
                 new_h, new_w = self.output_size * h / w, self.output_size
@@ -119,7 +119,7 @@ class Rescale(object):
         new_h, new_w = int(new_h), int(new_w)
 
         img = transform.resize(image, (new_h, new_w))
-        msk = transform.resize(mask, (new_h, new_w))
+        msk = transform.resize(mask, (new_h, new_w), preserve_range=True)
 
         return {'image':img,'mask':msk}
 
@@ -182,7 +182,7 @@ class ToTensor(object):
     def __call__(self, sample):
         image,mask = sample['image'], sample['mask']
         
-        image = image.transpose((2, 0, 1)).type(torch.FloatTensor)
+        image = image.transpose((2, 0, 1))
     
         return {'image':torch.from_numpy(image).type(torch.FloatTensor),
                 'mask': torch.from_numpy(mask).type(torch.LongTensor)}
@@ -224,6 +224,9 @@ def train_unet(model, device, optimizer, criterion, dataloader,
         avg_epoch_loss.append(loss_accum/len(dataloader))
     
     if save:
-        torch.save(model.state_dict(),SAVE_PATH)
+        try:
+            torch.save(model.state_dict(),SAVE_PATH)
+        except FileNotFoundError:
+            torch.save(model.state_dict(),'./')
     
     return avg_epoch_loss, model

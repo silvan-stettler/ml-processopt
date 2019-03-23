@@ -1,5 +1,6 @@
 # GITIGNORE
 
+*.pyc
 # FOLDERS
 .ipynb_checkpoints/
 images/
