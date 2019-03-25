@@ -89,6 +89,25 @@ class MicroscopeImageDataset(Dataset):
         w0, w1 = w_int[int(nw)], w_int[int(nw+1)]
         
         return {'image':img[h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
+
+class ConcatDatasets(Dataset):
+    def __init__(self, *datasets):
+        self.datasets = datasets
+        self.nbr_samples = [len(d) for d in self.datasets]
+    def __getitem__(self, idx):
+        cum_samples = np.cumsum(self.nbr_samples)
+        idx_larger = np.where(cum_samples > idx)
+        dset = self.datasets[min(idx_larger[0])]
+        
+        if min(idx_larger[0]) == 0:
+            idx_inside_dset = idx
+        else:
+            idx_inside_dset = idx - cum_samples[min(idx_larger[0])-1]
+      
+        return dset[idx_inside_dset]
+    
+    def __len__(self):
+        return np.sum(self.nbr_samples)
     
 class Rescale(object):
     """Rescale the image in a sample to a given size.
@@ -169,7 +188,7 @@ class BrightnessContrastAdjustment(object):
     def __call__(self, sample):
         out = sample['image']
         
-        
+        print(out.max(), out.min())
         if self.op_order=='contrast':
             out = np.clip(self.contr_corr*out + self.brightn_corr,0,1)
         elif self.op_order=='brightness':
