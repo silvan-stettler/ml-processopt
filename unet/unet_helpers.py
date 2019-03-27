@@ -142,6 +142,15 @@ class Rescale(object):
 
         return {'image':img,'mask':msk}
 
+class Rotate(object):
+    def __init__(self, angle):
+        self.angle = angle
+    def __call__(self, sample):
+        image, mask = sample['image'], sample['mask']
+        img = transform.rotate(image, self.angle, preserve_range=True, mode='edge')
+        msk = transform.rotate(mask, self.angle, preserve_range=True, mode='edge')
+        
+        return {'image':img,'mask':msk}
 
 class RandomCrop(object):
     """Crop randomly the image in a sample.
@@ -188,7 +197,6 @@ class BrightnessContrastAdjustment(object):
     def __call__(self, sample):
         out = sample['image']
         
-        print(out.max(), out.min())
         if self.op_order=='contrast':
             out = np.clip(self.contr_corr*out + self.brightn_corr,0,1)
         elif self.op_order=='brightness':
@@ -213,7 +221,7 @@ def train_unet(model, device, optimizer, criterion, dataloader,
     for _ in range(epochs):
         print("Epoch {0}".format(_))
         loss_accum = 0
-        for smple in dataloader:
+        for i,smple in enumerate(dataloader):
             X = smple['image']  # [N, 1, H, W]
             y = smple['mask']  # [N, H, W] with class indices (0, 1)
             
@@ -227,9 +235,10 @@ def train_unet(model, device, optimizer, criterion, dataloader,
                 if reg_type == 'l2':
                     for p in model.parameters():
                         loss += lambda_ * p.pow(2).sum()
-                    
-            print("Cross entropy loss: {:.02f}".format(loss.item()))
             loss_accum += loss.item()
+            
+            if (i%10 == 0) & (i != 0):        
+                print("Batch {:d}, Cross entropy loss: {:.02f}".format(i,loss_accum/i))
             
             optimizer.zero_grad()
             loss.backward()

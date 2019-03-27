@@ -8,6 +8,7 @@ Created on Wed Mar 20 16:41:21 2019
 import numpy as np
 import torch
 from torchvision import transforms
+import matplotlib.pyplot as plt
 
 def label_mask(mask_img, label_info):
     
@@ -40,8 +41,48 @@ def infere_model(model, X):
     output = -torch.nn.functional.log_softmax(output, dim=0)
     output_labels = output.argmax(dim=0)
     output_labels.unsqueeze_(0)
-    output_labels = output_labels.permute(1,2,0)
-    img = transforms.functional.to_pil_image(np.uint8(output_labels))
+    print(output_labels.shape)
     
-    return img
+    return output_labels.numpy()
+    #output_labels = output_labels.permute(1,2,0)
+    #img = transforms.functional.to_pil_image(np.uint8(output_labels))
+    
+    #return img
+    
+def visualize_sample(fig, sample, suppl_image=None):
+    try:
+        image, mask = sample['image'], sample['mask']
+    except KeyError:
+        print("Wrong sample format")
+        return None
+    
+    if len(image.shape) > 3:
+        image.squeeze_(0)
+        
+    elements = []
+    for layer in image:
+        elements.append(layer)
+    
+    elements.append(mask)
+    
+    if suppl_image is not None:
+        assert len(suppl_image.shape) <= 4
+        if len(suppl_image.shape) == 3:
+            for img in suppl_image:
+                elements.append(img)
+        else:
+            elements.append(suppl_image)
+        
+    n_elements = len(elements)
+    
+    axes = []
+    for i,e in enumerate(elements):
+        ax = fig.add_subplot(1,n_elements,i+1)
+        ax.imshow(e, cmap='gray', vmin=e.min(), vmax=e.max())
+        axes.append(ax)
+        
+    return axes
+        
+        
+    
     
