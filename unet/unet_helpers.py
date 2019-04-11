@@ -45,7 +45,12 @@ class MicroscopeImageDataset(Dataset):
             sub_idx = int(index%k)
             idx = int((index-sub_idx)/k)
         img_name = join(self.bottom_dir,self.file_list[idx])
-        mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
+        if self.mask_dir is not None:
+            mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
+            mask = io.imread(mask_name)
+            mask = label_mask(mask, self.mask_label_info)
+        else:
+            mask = None
         
         # Merge top and bottom picture to single input
         if self.read_top:
@@ -58,8 +63,7 @@ class MicroscopeImageDataset(Dataset):
             # Force 3D even if just a one channel image
             image = io.imread(img_name)[:,:, np.newaxis]
             image = image/image.max()
-        mask = io.imread(mask_name)
-        mask = label_mask(mask, self.mask_label_info)
+        
         sample = {'image':image,'mask':mask}
         if self.split_samples:
             sample = self.split_sample_(sample, sub_idx)
@@ -89,6 +93,26 @@ class MicroscopeImageDataset(Dataset):
         w0, w1 = w_int[int(nw)], w_int[int(nw+1)]
         
         return {'image':img[h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
+    
+    def infer(self, idx, model):
+        " Test the trained model on a sample"
+    
+        sample = self.__getitem__[idx]
+        X = sample['image']
+        assert isinstance(X, torch.FloatTensor)
+        assert X.shape[0] == 2
+        
+        X.unsqueeze_(0)
+        model.eval()
+        output = model(X)
+        output.squeeze_(0)
+        output = -torch.nn.functional.log_softmax(output, dim=0)
+        output_labels = output.argmax(dim=0)
+        output_labels.unsqueeze_(0)
+        print(output_labels.shape)
+        
+        return sample, output_labels.numpy()
+    
 
 class ConcatDatasets(Dataset):
     def __init__(self, *datasets):
@@ -126,7 +150,8 @@ class Rescale(object):
         image, mask = sample['image'], sample['mask']
 
         h, w = image.shape[:2]
-        assert image.shape[:2] == mask.shape
+        if mask is not None:
+            assert image.shape[:2] == mask.shape
         if isinstance(self.output_size, int):
             if h > w:
                 new_h, new_w = self.output_size * h / w, self.output_size
@@ -138,8 +163,10 @@ class Rescale(object):
         new_h, new_w = int(new_h), int(new_w)
 
         img = transform.resize(image, (new_h, new_w))
-        msk = transform.resize(mask, (new_h, new_w), preserve_range=True)
-
+        if mask is not None:
+            msk = transform.resize(mask, (new_h, new_w), preserve_range=True)
+        else: 
+            msk = None
         return {'image':img,'mask':msk}
 
 class Rotate(object):
@@ -210,9 +237,13 @@ class ToTensor(object):
         image,mask = sample['image'], sample['mask']
         
         image = image.transpose((2, 0, 1))
-    
+        
+        if mask is not None:
+            msk = torch.from_numpy(mask).type(torch.LongTensor)
+        else:
+            msk = None
         return {'image':torch.from_numpy(image).type(torch.FloatTensor),
-                'mask': torch.from_numpy(mask).type(torch.LongTensor)}
+                'mask': msk}
         
 def train_unet(model, device, optimizer, criterion, dataloader, 
                epochs=10, lambda_=1e-3, reg_type=None, save=False):
@@ -222,7 +253,9 @@ def train_unet(model, device, optimizer, criterion, dataloader,
         print("Epoch {0}".format(_))
         loss_accum = 0
         for i,smple in enumerate(dataloader):
+            print(type(smple))
             X = smple['image']  # [N, 1, H, W]
+            print(X.shape)
             y = smple['mask']  # [N, H, W] with class indices (0, 1)
             
             # Normalization is done with 2D batch norm labels in UNet
