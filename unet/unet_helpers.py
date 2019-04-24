@@ -23,6 +23,9 @@ class MicroscopeImageDataset(Dataset):
         self.transform_samples = transf
         self.mask_label_info = mask_label_info
         self.file_list = [ f for f in listdir(self.bottom_dir) if isfile(join(self.bottom_dir,f)) ]
+        
+        # Return top and bottom image by default
+        self.return_channel = None
         if split_samples:
             assert isinstance(split_samples, (int,tuple))
         self.split_samples = split_samples
@@ -64,12 +67,17 @@ class MicroscopeImageDataset(Dataset):
             image = io.imread(img_name)[:,:, np.newaxis]
             image = image/image.max()
         
-        sample = {'image':image,'mask':mask}
+        sample = {'image': image, 'mask': mask}
+        
         if self.split_samples:
             sample = self.split_sample_(sample, sub_idx)
             
         if self.transform_samples:
             sample = self.transform_samples(sample)
+            
+        if self.return_channel is not None:
+            sample['image'] = sample['image'][self.return_channel:self.return_channel+1]
+            
         return sample
     
     def split_sample_(self,sample, n):
@@ -97,10 +105,9 @@ class MicroscopeImageDataset(Dataset):
     def infer(self, idx, model):
         " Test the trained model on a sample"
     
-        sample = self.__getitem__[idx]
+        sample = self.__getitem__(idx)
         X = sample['image']
         assert isinstance(X, torch.FloatTensor)
-        assert X.shape[0] == 2
         
         X.unsqueeze_(0)
         model.eval()
@@ -113,9 +120,20 @@ class MicroscopeImageDataset(Dataset):
         
         return sample, output_labels.numpy()
     
+    def bottom(self):
+        self.return_channel = 0
+    
+    def top(self):
+        if not self.read_top:
+            print("Top pictures not available. Initialize with 'read_top = True'")
+            self.return_channel = 0
+        else:
+            self.return_channel = 1
+    
 
-class ConcatDatasets(Dataset):
+class ConcatDatasets(MicroscopeImageDataset):
     def __init__(self, *datasets):
+        # Initialize superclass ??
         self.datasets = datasets
         self.nbr_samples = [len(d) for d in self.datasets]
     def __getitem__(self, idx):
@@ -132,6 +150,14 @@ class ConcatDatasets(Dataset):
     
     def __len__(self):
         return np.sum(self.nbr_samples)
+    
+    def bottom(self):
+        for dset in self.datasets:
+            dset.bottom()
+    
+    def top(self):
+        for dset in self.datasets:
+            dset.top()
     
 class Rescale(object):
     """Rescale the image in a sample to a given size.
@@ -253,9 +279,7 @@ def train_unet(model, device, optimizer, criterion, dataloader,
         print("Epoch {0}".format(_))
         loss_accum = 0
         for i,smple in enumerate(dataloader):
-            print(type(smple))
             X = smple['image']  # [N, 1, H, W]
-            print(X.shape)
             y = smple['mask']  # [N, H, W] with class indices (0, 1)
             
             # Normalization is done with 2D batch norm labels in UNet
@@ -270,8 +294,8 @@ def train_unet(model, device, optimizer, criterion, dataloader,
                         loss += lambda_ * p.pow(2).sum()
             loss_accum += loss.item()
             
-            if (i%10 == 0) & (i != 0):        
-                print("Batch {:d}, Cross entropy loss: {:.02f}".format(i,loss_accum/i))
+            #if (i%10 == 0) & (i != 0):        
+            #    print("Batch {:d}, Cross entropy loss: {:.02f}".format(i,loss_accum/i))
             
             optimizer.zero_grad()
             loss.backward()
@@ -283,6 +307,7 @@ def train_unet(model, device, optimizer, criterion, dataloader,
                         p.sub_(p.sign() * p.abs().clamp(max = lambda_))
                         
         avg_epoch_loss.append(loss_accum/len(dataloader))
+        print(criterion.__class__.__name__ + ": {0:.03f}".format(loss_accum/len(dataloader)))
     
     if save:
         try:
