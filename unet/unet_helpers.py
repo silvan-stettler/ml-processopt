@@ -7,6 +7,7 @@ Created on Mon Mar 18 23:29:24 2019
 import torch
 from skimage import io, transform
 import numpy as np
+import time
 
 from torch.utils.data import Dataset
 from os import listdir
@@ -271,12 +272,13 @@ class ToTensor(object):
         return {'image':torch.from_numpy(image).type(torch.FloatTensor),
                 'mask': msk}
         
-def train_unet(model, device, optimizer, criterion, dataloader, 
+def train_unet(model, optimizer, criterion, dataloader, 
                epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
     
     avg_epoch_loss = []
     for _ in range(epochs):
         print("Epoch {0}".format(_))
+        start = time.time()
         loss_accum = 0
         for i,smple in enumerate(dataloader):
             X = smple['image']  # [N, 1, H, W]
@@ -311,13 +313,8 @@ def train_unet(model, device, optimizer, criterion, dataloader,
                         p.sub_(p.sign() * p.abs().clamp(max = lambda_))
                         
         avg_epoch_loss.append(loss_accum/len(dataloader))
-        print(criterion.__class__.__name__ + ": {0:.03f}".format(loss_accum/len(dataloader)))
-    
-    if save:
-        try:
-            torch.save(model.state_dict(),SAVE_PATH)
-        except FileNotFoundError:
-            torch.save(model.state_dict(),'./')
+        end = time.time()-start
+        print(criterion.__class__.__name__ + ": {0:.03f} Duration: {1:.02f}".format(loss_accum/len(dataloader), end))
     
     return avg_epoch_loss, model
 
