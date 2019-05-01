@@ -3,8 +3,11 @@
 # FOLDERS
 .ipynb_checkpoints/
 images/
+unet/convert/
+unet/out
 unet/__pycache__/
 
 # FILES
 example_kmean.PNG
+unet/convert_to_gray.py
 *.pyc

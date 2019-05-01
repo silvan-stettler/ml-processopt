@@ -50,7 +50,7 @@ class MicroscopeImageDataset(Dataset):
         img_name = join(self.bottom_dir,self.file_list[idx])
         if self.mask_dir is not None:
             mask_name = join(self.mask_dir, self.file_list[idx])[:-4] + '_mask.png'
-            mask = io.imread(mask_name)
+            mask = io.imread(mask_name, as_gray=True)
             mask = label_mask(mask, self.mask_label_info)
         else:
             mask = None
@@ -58,7 +58,7 @@ class MicroscopeImageDataset(Dataset):
         # Merge top and bottom picture to single input
         if self.read_top:
             img_name_top = join(self.top_dir, self.file_list[idx])[:-4] + '_top.png'
-            image_col = io.imread_collection([img_name, img_name_top])
+            image_col = io.ImageCollection([img_name, img_name_top])
             # 3D image
             image = io.concatenate_images(image_col)
             image = image.transpose((1,2,0))/image.max()
@@ -140,7 +140,7 @@ class ConcatDatasets(MicroscopeImageDataset):
         cum_samples = np.cumsum(self.nbr_samples)
         idx_larger = np.where(cum_samples > idx)
         dset = self.datasets[min(idx_larger[0])]
-        
+    
         if min(idx_larger[0]) == 0:
             idx_inside_dset = idx
         else:
@@ -193,6 +193,7 @@ class Rescale(object):
             msk = transform.resize(mask, (new_h, new_w), preserve_range=True)
         else: 
             msk = None
+        
         return {'image':img,'mask':msk}
 
 class Rotate(object):
@@ -202,7 +203,6 @@ class Rotate(object):
         image, mask = sample['image'], sample['mask']
         img = transform.rotate(image, self.angle, preserve_range=True, mode='edge')
         msk = transform.rotate(mask, self.angle, preserve_range=True, mode='edge')
-        
         return {'image':img,'mask':msk}
 
 class RandomCrop(object):
@@ -316,3 +316,6 @@ def train_unet(model, device, optimizer, criterion, dataloader,
             torch.save(model.state_dict(),'./')
     
     return avg_epoch_loss, model
+
+def imread_convert(f):
+    return io.imread(f, as_gray=True)
