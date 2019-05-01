@@ -136,7 +136,7 @@ class ConcatDatasets(MicroscopeImageDataset):
         # Initialize superclass ??
         self.datasets = datasets
         self.nbr_samples = [len(d) for d in self.datasets]
-    def __getitem__(self, idx):
+    def __getitem__(self, idx): 
         cum_samples = np.cumsum(self.nbr_samples)
         idx_larger = np.where(cum_samples > idx)
         dset = self.datasets[min(idx_larger[0])]
@@ -272,7 +272,7 @@ class ToTensor(object):
                 'mask': msk}
         
 def train_unet(model, device, optimizer, criterion, dataloader, 
-               epochs=10, lambda_=1e-3, reg_type=None, save=False):
+               epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
     
     avg_epoch_loss = []
     for _ in range(epochs):
@@ -281,6 +281,10 @@ def train_unet(model, device, optimizer, criterion, dataloader,
         for i,smple in enumerate(dataloader):
             X = smple['image']  # [N, 1, H, W]
             y = smple['mask']  # [N, H, W] with class indices (0, 1)
+            
+            if use_cuda and torch.cuda.is_available():
+                X = X.cuda()
+                y = y.cuda()
             
             # Normalization is done with 2D batch norm labels in UNet
             
