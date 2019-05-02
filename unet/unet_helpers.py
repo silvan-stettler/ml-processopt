@@ -103,10 +103,13 @@ class MicroscopeImageDataset(Dataset):
         
         return {'image':img[h0:h1, w0:w1], 'mask':msk[h0:h1, w0:w1]}
     
-    def infer(self, idx, model):
+    def infer(self, idx, model, use_cuda=False):
         " Test the trained model on a sample"
     
         sample = self.__getitem__(idx)
+        
+        if use_cuda and torch.cuda.is_available():
+            X = X.cuda()
         X = sample['image']
         assert isinstance(X, torch.FloatTensor)
         
@@ -260,9 +263,6 @@ class BrightnessContrastAdjustment(object):
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
     
-    def __init__(self, use_cuda=False):
-        self.use_cuda = use_cuda
-        
     def __call__(self, sample):
         image,mask = sample['image'], sample['mask']
         
@@ -273,12 +273,8 @@ class ToTensor(object):
         else:
             msk = None
         
-        if self.use_cuda and torch.cuda.is_available():
-            return {'image':torch.from_numpy(image).type(torch.FloatTensor).cuda(),
-                    'mask': msk.cuda()}
-        else:
-            return {'image':torch.from_numpy(image).type(torch.FloatTensor),
-                    'mask': msk}
+        return {'image':torch.from_numpy(image).type(torch.FloatTensor),
+                'mask': msk}
         
 def train_unet(model, optimizer, criterion, dataloader, 
                epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
