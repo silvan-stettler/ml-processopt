@@ -259,7 +259,10 @@ class BrightnessContrastAdjustment(object):
     
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
-
+    
+    def __init__(self, use_cuda=False):
+        self.use_cuda = use_cuda
+        
     def __call__(self, sample):
         image,mask = sample['image'], sample['mask']
         
@@ -269,8 +272,13 @@ class ToTensor(object):
             msk = torch.from_numpy(mask).type(torch.LongTensor)
         else:
             msk = None
-        return {'image':torch.from_numpy(image).type(torch.FloatTensor),
-                'mask': msk}
+        
+        if self.use_cuda and torch.cuda.is_available():
+            return {'image':torch.from_numpy(image).type(torch.FloatTensor).cuda(),
+                    'mask': msk.cuda()}
+        else:
+            return {'image':torch.from_numpy(image).type(torch.FloatTensor),
+                    'mask': msk}
         
 def train_unet(model, optimizer, criterion, dataloader, 
                epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
