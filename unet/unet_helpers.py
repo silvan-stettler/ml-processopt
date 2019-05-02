@@ -107,11 +107,11 @@ class MicroscopeImageDataset(Dataset):
         " Test the trained model on a sample"
     
         sample = self.__getitem__(idx)
+        X = sample['image']
+        assert isinstance(X, torch.FloatTensor)
         
         if use_cuda and torch.cuda.is_available():
             X = X.cuda()
-        X = sample['image']
-        assert isinstance(X, torch.FloatTensor)
         
         X.unsqueeze_(0)
         model.eval()
@@ -120,7 +120,9 @@ class MicroscopeImageDataset(Dataset):
         output = -torch.nn.functional.log_softmax(output, dim=0)
         output_labels = output.argmax(dim=0)
         output_labels.unsqueeze_(0)
-        print(output_labels.shape)
+        
+        # Allocate output back to cpu
+        output_labels.cpu()
         
         return sample, output_labels.numpy()
     
