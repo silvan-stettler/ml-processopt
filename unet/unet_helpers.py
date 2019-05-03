@@ -121,10 +121,7 @@ class MicroscopeImageDataset(Dataset):
         output_labels = output.argmax(dim=0)
         output_labels.unsqueeze_(0)
         
-        # Allocate output back to cpu
-        output_labels.cpu()
-        
-        return sample, output_labels.numpy()
+        return sample, output_labels.cpu().numpy()
     
     def bottom(self):
         self.return_channel = 0
