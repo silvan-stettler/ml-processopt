@@ -6,6 +6,7 @@ images/
 unet/convert/
 unet/out
 unet/__pycache__/
+set23/
 
 # FILES
 example_kmean.PNG

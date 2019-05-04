@@ -5,6 +5,7 @@ Created on Mon Mar 18 23:29:24 2019
 @author: silus
 """
 import torch
+import torch.nn.functional as F
 from skimage import io, transform
 import numpy as np
 import time
@@ -16,13 +17,15 @@ from .utils import label_mask
 
 SAVE_PATH = '../trained/unet.pt'
 class MicroscopeImageDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, mask_label_info, read_top=True, split_samples=None, transf=None):
+    def __init__(self, img_dir, mask_dir, mask_label_info, read_top=True, 
+                 split_samples=None, transf=None, pixel_weights=True):
         self.bottom_dir = img_dir[0]
         self.top_dir = img_dir[1]
         self.mask_dir = mask_dir
         self.read_top = read_top
         self.transform_samples = transf
         self.mask_label_info = mask_label_info
+        self.pixel_weights = pixel_weights
         self.file_list = [ f for f in listdir(self.bottom_dir) if isfile(join(self.bottom_dir,f)) ]
         
         # Return top and bottom image by default
@@ -30,6 +33,9 @@ class MicroscopeImageDataset(Dataset):
         if split_samples:
             assert isinstance(split_samples, (int,tuple))
         self.split_samples = split_samples
+        
+        # Compute class frequencies
+        self.compute_class_freq_()
     def __len__(self):
         if self.split_samples:
             if isinstance(self.split_samples, int):
@@ -78,6 +84,9 @@ class MicroscopeImageDataset(Dataset):
             
         if self.return_channel is not None:
             sample['image'] = sample['image'][self.return_channel:self.return_channel+1]
+            
+        if self.pixel_weights and hasattr(self, 'label_weights'):
+            sample = self.compute_pixel_weight(sample)
             
         return sample
     
@@ -133,6 +142,62 @@ class MicroscopeImageDataset(Dataset):
         else:
             self.return_channel = 1
     
+    def compute_class_freq_(self):
+        
+        all_labels = torch.Tensor(self.mask_label_info[0])
+        tot_freq = torch.zeros_like(all_labels)
+        for i in range(self.__len__()):
+            sample = self.__getitem__(i)
+            labels = sample['mask']
+            
+            
+            unique_labels, freq = torch.unique(labels, return_counts=True)
+            l_freq = torch.zeros_like(tot_freq)
+            
+            for l,f in zip(unique_labels, freq):
+                idx = (all_labels==l.item()).nonzero().item()
+                l_freq[idx] = f.item()
+            
+            tot_freq += l_freq
+                
+        print("Class frequecies:")
+        for i,l in enumerate(all_labels):
+            print("{0} {1:.02f}% of pixels".format(l.item(), 100*tot_freq[i].item()/tot_freq.sum().item()))
+        
+        self.frequencies = tot_freq
+        self.label_weights = (all_labels, tot_freq.sum()/tot_freq)
+    
+    def compute_pixel_weight(self, sample, window_size=5, thresh=0.5):
+        """
+            Computes loss weight of a pixel as a function of class frequency and
+            distance to the closest pixel of another class
+        """
+        image,labels = sample['image'], sample['mask']
+        label_weights = self.label_weights[1]
+        freq_weight = labels
+        w = int((window_size-1)/2)
+        
+        rows, cols = labels.shape
+        
+        for i,l in enumerate(self.label_weights[0]):
+            freq_weight[freq_weight==l.item()] = label_weights[i]
+            
+        neigh_ratio = torch.zeros_like(labels)
+        
+        for row in range(rows):
+            for col in range(cols):
+                w_r = np.clip([row-w, row+w],0,rows)
+                w_c = np.clip([col-w, col+w],0,cols)
+                
+                window = labels[w_r[0]:w_r[1],w_c[0]:w_c[1]]
+                n_same = torch.numel(window[window==labels[row, col].item()])-1
+                neigh_ratio[row, col] = n_same/(torch.numel(window)-1) 
+                
+        weight = freq_weight + label_weights.mean() * torch.exp(-neigh_ratio.pow(2)/(2*thresh**2))
+        
+        return {'image':image, 'mask': labels, 'weight': weight}
+        
+                
 
 class ConcatDatasets(MicroscopeImageDataset):
     def __init__(self, *datasets):
@@ -275,8 +340,23 @@ class ToTensor(object):
         return {'image':torch.from_numpy(image).type(torch.FloatTensor),
                 'mask': msk}
         
+def init_weights(module):
+    """
+        Initialize the weights of module.
+        Xavier initialization for Conv and Linear layers
+    """
+    
+    if isinstance(module, torch.nn.BatchNorm2d):
+        module.reset_parameters()
+    else:
+        torch.nn.init.kaiming_normal_(module.weight.data, nonlinearity='relu')
+        
+        
 def train_unet(model, optimizer, criterion, dataloader, 
                epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
+    
+    model.apply(init_weights)
+    model.train()
     
     avg_epoch_loss = []
     for _ in range(epochs):
@@ -321,5 +401,13 @@ def train_unet(model, optimizer, criterion, dataloader,
     
     return avg_epoch_loss, model
 
-def imread_convert(f):
-    return io.imread(f, as_gray=True)
+def pixel_cross_entropy(pred, target, weights):
+    """
+        Cross entropy loss where a weight is assigned for the loss of each pixel
+    """
+    
+    out = F.cross_entropy(pred, target)
+    out = out * weights.expand_as(out)
+    
+    return out.sum(0)
+    
