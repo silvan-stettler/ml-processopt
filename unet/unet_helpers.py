@@ -13,19 +13,20 @@ import time
 from torch.utils.data import Dataset
 from os import listdir
 from os.path import isfile, join
-from .utils import label_mask
+from .utils import label_mask, find_closest_pixel
 
 SAVE_PATH = '../trained/unet.pt'
+PIX_WEIGHT_PATH='./pixw'
 class MicroscopeImageDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, mask_label_info, read_top=True, 
-                 split_samples=None, transf=None, pixel_weights=True):
+    def __init__(self,name , img_dir, mask_dir, mask_label_info, read_top=True, 
+                 split_samples=None, transf=None, pixel_weights=(1,5)):
+        self.name = name
         self.bottom_dir = img_dir[0]
         self.top_dir = img_dir[1]
         self.mask_dir = mask_dir
         self.read_top = read_top
         self.transform_samples = transf
         self.mask_label_info = mask_label_info
-        self.pixel_weights = pixel_weights
         self.file_list = [ f for f in listdir(self.bottom_dir) if isfile(join(self.bottom_dir,f)) ]
         
         # Return top and bottom image by default
@@ -36,6 +37,9 @@ class MicroscopeImageDataset(Dataset):
         
         # Compute class frequencies
         self.compute_class_freq_()
+        self.compute_pixel_weight_(pixel_weights)
+        self.pixel_weights = True
+        
     def __len__(self):
         if self.split_samples:
             if isinstance(self.split_samples, int):
@@ -85,8 +89,8 @@ class MicroscopeImageDataset(Dataset):
         if self.return_channel is not None:
             sample['image'] = sample['image'][self.return_channel:self.return_channel+1]
             
-        if self.pixel_weights and hasattr(self, 'label_weights'):
-            sample = self.compute_pixel_weight(sample)
+        if hasattr(self, 'pixel_weights') and hasattr(self, 'label_weights'):
+            sample = self.get_pixel_weight_(sample, index)
             
         return sample
     
@@ -167,38 +171,40 @@ class MicroscopeImageDataset(Dataset):
         self.frequencies = tot_freq
         self.label_weights = (all_labels, tot_freq.sum()/tot_freq)
     
-    def compute_pixel_weight(self, sample, window_size=5, thresh=0.5):
+    def compute_pixel_weight_(self, params):
         """
             Computes loss weight of a pixel as a function of class frequency and
             distance to the closest pixel of another class
         """
-        image,labels = sample['image'], sample['mask']
-        label_weights = self.label_weights[1]
-        freq_weight = labels
-        w = int((window_size-1)/2)
         
-        rows, cols = labels.shape
-        
-        for i,l in enumerate(self.label_weights[0]):
-            freq_weight[freq_weight==l.item()] = label_weights[i]
+        for i in range(self.__len__()):
+            sample = self.__getitem__(i)
             
-        neigh_ratio = torch.zeros_like(labels)
+            filename = 'w_'+self.name+'_'+str(i)+'.pt'
+            d_weight_multiplier, sigma = params
+            labels = sample['mask']
+            label_weights = self.label_weights[1]
+            freq_weight = torch.zeros_like(labels, dtype=torch.float)
+            
+            # Assign weight based on class of a pixel 
+            for j,l in enumerate(self.label_weights[0]):
+                freq_weight[labels==l.item()] = label_weights[j]
+                # Create lookup table for indices of pixels belonging to a class
+            
+            distances = find_closest_pixel(labels, self.label_weights[0])
+            dist_weight = torch.exp(-distances.pow(2)/(2*sigma**2))
+            
+            weight = freq_weight + label_weights.mean() * d_weight_multiplier * dist_weight
+            torch.save(weight, PIX_WEIGHT_PATH+'/'+filename)
         
-        for row in range(rows):
-            for col in range(cols):
-                w_r = np.clip([row-w, row+w],0,rows)
-                w_c = np.clip([col-w, col+w],0,cols)
-                
-                window = labels[w_r[0]:w_r[1],w_c[0]:w_c[1]]
-                n_same = torch.numel(window[window==labels[row, col].item()])-1
-                neigh_ratio[row, col] = n_same/(torch.numel(window)-1) 
-                
-        weight = freq_weight + label_weights.mean() * torch.exp(-neigh_ratio.pow(2)/(2*thresh**2))
-        
-        return {'image':image, 'mask': labels, 'weight': weight}
-        
-                
-
+    def get_pixel_weight_(self, sample, idx):
+        filename = 'w_'+self.name+'_'+str(idx)+'.pt'
+        try:
+            weight = torch.load(PIX_WEIGHT_PATH+'/'+filename)
+            return {'image':sample['image'], 'mask': sample['mask'], 'weight': weight}
+        except FileNotFoundError:
+            print("Pixel weights {0} not found for sample index {1}".format(filename, idx))
+    
 class ConcatDatasets(MicroscopeImageDataset):
     def __init__(self, *datasets):
         # Initialize superclass ??
@@ -348,12 +354,12 @@ def init_weights(module):
     
     if isinstance(module, torch.nn.BatchNorm2d):
         module.reset_parameters()
-    else:
+    elif not isinstance(module, torch.nn.ReLU) or not isinstance(module, torch.nn.Tanh):
         torch.nn.init.kaiming_normal_(module.weight.data, nonlinearity='relu')
         
         
 def train_unet(model, optimizer, criterion, dataloader, 
-               epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False):
+               epochs=10, lambda_=1e-3, reg_type=None, use_cuda=False, pixel_weights=True):
     
     model.apply(init_weights)
     model.train()
@@ -367,14 +373,20 @@ def train_unet(model, optimizer, criterion, dataloader,
             X = smple['image']  # [N, 1, H, W]
             y = smple['mask']  # [N, H, W] with class indices (0, 1)
             
+            if pixel_weights:
+                w = smple['weight']
             if use_cuda and torch.cuda.is_available():
                 X = X.cuda()
                 y = y.cuda()
-            
+                w = w.cuda()
             # Normalization is done with 2D batch norm labels in UNet
             
             prediction = model(X)  # [N, 2, H, W]
-            loss = criterion(prediction, y)
+            
+            if pixel_weights:
+                loss = criterion(prediction, y, w)
+            else:
+                loss = criterion(prediction, y)
             
             if reg_type:
                 assert reg_type in ['l2','l1']
