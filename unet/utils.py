@@ -6,6 +6,8 @@ Created on Wed Mar 20 16:41:21 2019
 """
 import torch
 import numpy as np
+import scipy.spatial as sp
+from itertools import permutations
 
 def count_module_train_params(module):
     
@@ -70,7 +72,7 @@ def label_mask(mask_img, label_info):
         
     return out
     
-def visualize_sample(fig, sample, suppl_image=None):
+def visualize_sample(fig, sample, suppl_image=None, cmaps=None):
     try:
         image, mask = sample['image'], sample['mask']
     except KeyError:
@@ -97,14 +99,44 @@ def visualize_sample(fig, sample, suppl_image=None):
         
     n_elements = len(elements)
     
+    if cmaps is not None:
+        assert len(cmaps) == len(elements)
     axes = []
     for i,e in enumerate(elements):
         ax = fig.add_subplot(1,n_elements,i+1)
-        ax.imshow(e, cmap='gray', vmin=e.min(), vmax=e.max())
+        if cmaps is not None:
+            cmap = cmaps[i]
+            if cmap == '':
+                cmap = 'gray'
+        else:
+            cmap = 'gray'
+        ax.imshow(e, cmap=cmap, vmin=e.min(), vmax=e.max())
         axes.append(ax)
         
     return axes
         
+def find_closest_pixel(image, labels):
+    
+    indices = {}
+    for i,l in enumerate(labels):
+        loc = (image == l.item())
+        if not loc.any():
+            continue
+        indices[str(l.item())] = (loc, loc.nonzero(), sp.KDTree(loc.nonzero().numpy(), leafsize=100))
+        
+    dist = torch.zeros_like(image, dtype=torch.float)
+    add_dist = torch.zeros_like(image, dtype=torch.float)
+    
+    for kcomb in permutations(indices.keys()):
+        pixel = indices[kcomb[0]]
+        target = indices[kcomb[1]]
+        
+        d,_ = target[2].query(pixel[1].numpy())
+        add_dist[pixel[0]] = torch.Tensor(d)
+        dist += add_dist
+    
+    return dist
+    
 def add_to_summary(summary, layer, in_shape, out_shape, n_param):
     summary['Trainable params'].append(n_param)
     summary['Layer'].append(layer)
