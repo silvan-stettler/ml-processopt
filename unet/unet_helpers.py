@@ -354,7 +354,7 @@ def init_weights(module):
     
     if isinstance(module, torch.nn.BatchNorm2d):
         module.reset_parameters()
-    elif not isinstance(module, torch.nn.ReLU) or not isinstance(module, torch.nn.Tanh):
+    if isinstance(module, torch.nn.Conv2d) or isinstance(module, torch.nn.ConvTranspose2d) or isinstance(module, torch.nn.Linear):
         torch.nn.init.kaiming_normal_(module.weight.data, nonlinearity='relu')
         
         
