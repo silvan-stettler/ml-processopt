@@ -5,7 +5,6 @@ Created on Mon Mar 18 23:29:24 2019
 @author: silus
 """
 import torch
-import torch.nn.functional as F
 from skimage import io, transform
 import numpy as np
 import time
@@ -19,7 +18,7 @@ SAVE_PATH = '../trained/unet.pt'
 PIX_WEIGHT_PATH='./pixw'
 class MicroscopeImageDataset(Dataset):
     def __init__(self,name , img_dir, mask_dir, mask_label_info, read_top=True, 
-                 split_samples=None, transf=None, pixel_weights=(1,5)):
+                 split_samples=None, transf=None, pixel_weights=(1,5), recompute=False):
         self.name = name
         self.bottom_dir = img_dir[0]
         self.top_dir = img_dir[1]
@@ -37,7 +36,7 @@ class MicroscopeImageDataset(Dataset):
         
         # Compute class frequencies
         self.compute_class_freq_()
-        self.compute_pixel_weight_(pixel_weights)
+        self.compute_pixel_weight_(pixel_weights, recompute=recompute)
         self.pixel_weights = True
         
     def __len__(self):
@@ -171,7 +170,7 @@ class MicroscopeImageDataset(Dataset):
         self.frequencies = tot_freq
         self.label_weights = (all_labels, tot_freq.sum()/tot_freq)
     
-    def compute_pixel_weight_(self, params):
+    def compute_pixel_weight_(self, params, recompute=False):
         """
             Computes loss weight of a pixel as a function of class frequency and
             distance to the closest pixel of another class
@@ -181,21 +180,23 @@ class MicroscopeImageDataset(Dataset):
             sample = self.__getitem__(i)
             
             filename = 'w_'+self.name+'_'+str(i)+'.pt'
-            d_weight_multiplier, sigma = params
-            labels = sample['mask']
-            label_weights = self.label_weights[1]
-            freq_weight = torch.zeros_like(labels, dtype=torch.float)
             
-            # Assign weight based on class of a pixel 
-            for j,l in enumerate(self.label_weights[0]):
-                freq_weight[labels==l.item()] = label_weights[j]
-                # Create lookup table for indices of pixels belonging to a class
-            
-            distances = find_closest_pixel(labels, self.label_weights[0])
-            dist_weight = torch.exp(-distances.pow(2)/(2*sigma**2))
-            
-            weight = freq_weight + label_weights.mean() * d_weight_multiplier * dist_weight
-            torch.save(weight, PIX_WEIGHT_PATH+'/'+filename)
+            if filename not in listdir(PIX_WEIGHT_PATH) or recompute:
+                d_weight_multiplier, sigma = params
+                labels = sample['mask']
+                label_weights = self.label_weights[1]
+                freq_weight = torch.zeros_like(labels, dtype=torch.float)
+                
+                # Assign weight based on class of a pixel 
+                for j,l in enumerate(self.label_weights[0]):
+                    freq_weight[labels==l.item()] = label_weights[j]
+                    # Create lookup table for indices of pixels belonging to a class
+                
+                distances = find_closest_pixel(labels, self.label_weights[0])
+                dist_weight = torch.exp(-distances.pow(2)/(2*sigma**2))
+                
+                weight = freq_weight + label_weights.mean() * d_weight_multiplier * dist_weight
+                torch.save(weight, PIX_WEIGHT_PATH+'/'+filename)
         
     def get_pixel_weight_(self, sample, idx):
         filename = 'w_'+self.name+'_'+str(idx)+'.pt'
@@ -378,7 +379,8 @@ def train_unet(model, optimizer, criterion, dataloader,
             if use_cuda and torch.cuda.is_available():
                 X = X.cuda()
                 y = y.cuda()
-                w = w.cuda()
+                if pixel_weights:
+                    w = w.cuda()
             # Normalization is done with 2D batch norm labels in UNet
             
             prediction = model(X)  # [N, 2, H, W]
@@ -412,14 +414,4 @@ def train_unet(model, optimizer, criterion, dataloader,
         print(criterion.__class__.__name__ + ": {0:.03f} Duration: {1:.02f}".format(loss_accum/len(dataloader), end))
     
     return avg_epoch_loss, model
-
-def pixel_cross_entropy(pred, target, weights):
-    """
-        Cross entropy loss where a weight is assigned for the loss of each pixel
-    """
-    
-    out = F.cross_entropy(pred, target)
-    out = out * weights.expand_as(out)
-    
-    return out.sum(0)
     

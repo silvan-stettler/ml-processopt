@@ -5,6 +5,7 @@ Created on Wed Mar 20 16:41:21 2019
 @author: silus
 """
 import torch
+import torch.nn.functional as F
 import numpy as np
 import scipy.spatial as sp
 from itertools import permutations
@@ -136,6 +137,50 @@ def find_closest_pixel(image, labels):
         dist += add_dist
     
     return dist
+
+def pixel_cross_entropy(pred, target, weights=None):
+    """
+        Cross entropy loss where a weight is assigned for the loss of each pixel
+    """
+    batch_size, num_classes, h, w = pred.shape
+    logits = F.log_softmax(pred, 1).permute(0,2,3,1)
+    
+    if target.is_cuda:
+        device = target.data.get_device()
+        one_hot_mask = torch.autograd.Variable(torch.arange(0, num_classes)
+                                               .long()
+                                               .repeat(batch_size, h, w, 1)
+                                               .cuda(device)
+                                               .eq(target.data.unsqueeze(3).repeat(1,1,1,num_classes)))
+        wghts = weights.unsqueeze(0).cuda(device)
+    else:
+        one_hot_mask = torch.autograd.Variable(torch.arange(0, num_classes)
+                                               .long()
+                                               .repeat(batch_size, h, w, 1)
+                                               .eq(target.data.unsqueeze(3).repeat(1,1,1,num_classes)))
+        wghts = weights.unsqueeze(0)  
+         
+    loss = -logits.masked_select(one_hot_mask).view(batch_size, h, w) * wghts 
+    
+    return loss.mean((1,2))
+
+class PixelWeightCrossEntropyLoss(torch.nn.Module):
+    """
+    Cross entropy with instance-wise weights. Leave `aggregate` to None to obtain a loss
+    vector of shape (batch_size,).
+    """
+    def __init__(self, aggregate='mean'):
+        super(PixelWeightCrossEntropyLoss, self).__init__()
+        assert aggregate in ['sum', 'mean', None]
+        self.aggregate = aggregate
+
+    def forward(self, inp, target, weights=None):
+        if self.aggregate == 'sum':
+            return pixel_cross_entropy(inp, target, weights).sum()
+        elif self.aggregate == 'mean':
+            return pixel_cross_entropy(inp, target, weights).mean()
+        elif self.aggregate is None:
+            return pixel_cross_entropy(inp, target, weights)
     
 def add_to_summary(summary, layer, in_shape, out_shape, n_param):
     summary['Trainable params'].append(n_param)
