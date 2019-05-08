@@ -182,7 +182,6 @@ class MicroscopeImageDataset(Dataset):
             filename = 'w_'+self.name+'_'+str(i)+'.pt'
             
             if filename not in listdir(PIX_WEIGHT_PATH) or recompute:
-                d_weight_multiplier, sigma = params
                 labels = sample['mask']
                 label_weights = self.label_weights[1]
                 freq_weight = torch.zeros_like(labels, dtype=torch.float)
@@ -190,12 +189,17 @@ class MicroscopeImageDataset(Dataset):
                 # Assign weight based on class of a pixel 
                 for j,l in enumerate(self.label_weights[0]):
                     freq_weight[labels==l.item()] = label_weights[j]
-                    # Create lookup table for indices of pixels belonging to a class
-                
-                distances = find_closest_pixel(labels, self.label_weights[0])
-                dist_weight = torch.exp(-distances.pow(2)/(2*sigma**2))
-                
-                weight = freq_weight + label_weights.mean() * d_weight_multiplier * dist_weight
+        
+                if params is not None:
+                    assert isinstance(params, tuple)
+                    d_weight_multiplier, sigma = params
+                    distances = find_closest_pixel(labels, self.label_weights[0])
+                    dist_weight = torch.exp(-distances.pow(2)/(2*sigma**2))
+                    
+                    weight = freq_weight + label_weights.mean() * d_weight_multiplier * dist_weight
+                else:
+                    weight = freq_weight
+                    
                 torch.save(weight, PIX_WEIGHT_PATH+'/'+filename)
         
     def get_pixel_weight_(self, sample, idx):
@@ -350,7 +354,8 @@ class ToTensor(object):
 def init_weights(module):
     """
         Initialize the weights of module.
-        Xavier initialization for Conv and Linear layers
+        Kaiming initialization for Conv and Linear layers similar to the 
+        original publication on U-Net
     """
     
     if isinstance(module, torch.nn.BatchNorm2d):
