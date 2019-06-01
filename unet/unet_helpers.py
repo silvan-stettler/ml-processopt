@@ -302,7 +302,8 @@ class RandomCrop(object):
 
     def __call__(self, sample):
         image, mask = sample['image'], sample['mask']
-        assert image.shape == mask.shape
+        if mask is not None:
+            assert image.shape[:2] == mask.shape
 
         h, w = image.shape[:2]
         new_h, new_w = self.output_size
