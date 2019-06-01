@@ -128,13 +128,16 @@ def find_closest_pixel(image, labels):
     dist = torch.zeros_like(image, dtype=torch.float)
     add_dist = torch.zeros_like(image, dtype=torch.float)
     
-    for kcomb in permutations(indices.keys()):
-        pixel = indices[kcomb[0]]
-        target = indices[kcomb[1]]
-        
-        d,_ = target[2].query(pixel[1].numpy())
-        add_dist[pixel[0]] = torch.Tensor(d)
-        dist += add_dist
+    if len(indices.keys()) < 2:
+        dist.fill_(50)
+    else:
+        for kcomb in permutations(indices.keys()):
+            pixel = indices[kcomb[0]]
+            target = indices[kcomb[1]]
+
+            d,_ = target[2].query(pixel[1].numpy())
+            add_dist[pixel[0]] = torch.Tensor(d)
+            dist += add_dist
     
     return dist
 
