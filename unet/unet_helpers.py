@@ -129,7 +129,7 @@ class MicroscopeImageDataset(Dataset):
         model.eval()
         output = model(X)
         output.squeeze_(0)
-        output = -torch.nn.functional.log_softmax(output, dim=0)
+        output = torch.nn.functional.log_softmax(output, dim=0)
         output_labels = output.argmax(dim=0)
         output_labels.unsqueeze_(0)
         
